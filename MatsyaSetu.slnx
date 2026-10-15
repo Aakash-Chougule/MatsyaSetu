@@ -1,0 +1,9 @@
+<Solution>
+  <Project Path="MatsyaSetu.API/MatsyaSetu.API.csproj" Id="65dacb85-112e-46b3-8f6e-fa2df5a32b5e" />
+  <Project Path="MatsyaSetu.Application/MatsyaSetu.Application.csproj" Id="dbdaed4c-09e8-42c4-afc8-43d6b41528ab" />
+  <Project Path="MatsyaSetu.Contracts/MatsyaSetu.Contracts.csproj" Id="0dcfc7c4-1746-45b8-9112-089a8a067d7b" />
+  <Project Path="MatsyaSetu.Domain/MatsyaSetu.Domain.csproj" Id="78d3a35d-5df4-4ef8-832b-b36ac21ad33c" />
+  <Project Path="MatsyaSetu.Infrastructure/MatsyaSetu.Infrastructure.csproj" Id="218d0a6d-a11d-4a37-82a3-e9d0e035afda" />
+  <Project Path="MatsyaSetu.IntegrationTests/MatsyaSetu.IntegrationTests.csproj" Id="25b4516c-8346-4bb1-b3ed-fce595e692ab" />
+  <Project Path="MatsyaSetu.UnitTests/MatsyaSetu.UnitTests.csproj" Id="d6a35b92-ed5f-4abb-85f8-ed40db60a6f4" />
+</Solution>
