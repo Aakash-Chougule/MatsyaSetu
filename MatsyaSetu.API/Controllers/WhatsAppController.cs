@@ -480,17 +480,9 @@ namespace MatsyaSetu.API.Controllers
         // Helper method
         // ============================================================
 
-        private static string? GetString(
-            JsonElement parent,
-            string propertyName)
+        private static string? GetString(JsonElement parent, string propertyName)
         {
-            if (parent.ValueKind !=
-                    JsonValueKind.Object ||
-                !parent.TryGetProperty(
-                    propertyName,
-                    out var element) ||
-                element.ValueKind !=
-                    JsonValueKind.String)
+            if (parent.ValueKind != JsonValueKind.Object || !parent.TryGetProperty(propertyName, out var element) || element.ValueKind != JsonValueKind.String)
             {
                 return null;
             }
