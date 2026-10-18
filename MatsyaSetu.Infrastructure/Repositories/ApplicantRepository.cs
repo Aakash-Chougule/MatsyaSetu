@@ -1,5 +1,4 @@
-﻿
-using System.Data;
+﻿using System.Data;
 using Microsoft.Data.SqlClient;
 using MatsyaSetu.Application.Interfaces;
 using MatsyaSetu.Domain.Entities;
@@ -12,26 +11,40 @@ namespace MatsyaSetu.Infrastructure.Repositories
         private readonly IDbConnectionFactory _factory;
 
         // Constructor Dependency Injection
-        public ApplicantRepository(IDbConnectionFactory factory)
+        public ApplicantRepository(
+            IDbConnectionFactory factory)
         {
             _factory = factory;
         }
 
-        // Insert an applicant and return their generated ID
+        // ============================================================
+        // Create applicant
+        // ============================================================
         public async Task<int> CreateAsync(
             Applicant applicant,
             CancellationToken cancellationToken = default)
         {
-            // Create a new database connection
+            // --------------------------------------------------------
+            // Factory creates AND opens the connection
+            // --------------------------------------------------------
+
             await using var connection =
-                _factory.CreateConnection();
+                await _factory
+                    .CreateOpenConnectionAsync(
+                        cancellationToken);
 
-            // Open the connection asynchronously
-            await connection.OpenAsync(cancellationToken);
 
-            // Create an SQL command
+            // --------------------------------------------------------
+            // Create SQL command
+            // --------------------------------------------------------
+
             await using var command =
                 connection.CreateCommand();
+
+
+            // --------------------------------------------------------
+            // Parameterized INSERT query
+            // --------------------------------------------------------
 
             command.CommandText = @"
                 INSERT INTO Applicants
@@ -40,22 +53,43 @@ namespace MatsyaSetu.Infrastructure.Repositories
                 VALUES
                     (@FullName, @MobileNumber);";
 
-            // Parameterized queries prevent SQL injection
+
+            // --------------------------------------------------------
+            // FullName parameter
+            // --------------------------------------------------------
+
             command.Parameters.Add(
-                new SqlParameter("@FullName", SqlDbType.NVarChar, 150)
+                new SqlParameter(
+                    "@FullName",
+                    SqlDbType.NVarChar,
+                    150)
                 {
                     Value = applicant.FullName
                 });
 
+
+            // --------------------------------------------------------
+            // MobileNumber parameter
+            // --------------------------------------------------------
+
             command.Parameters.Add(
-                new SqlParameter("@MobileNumber", SqlDbType.VarChar, 10)
+                new SqlParameter(
+                    "@MobileNumber",
+                    SqlDbType.VarChar,
+                    10)
                 {
                     Value = applicant.MobileNumber
                 });
 
-            // Execute query and get generated ApplicantId
+
+            // --------------------------------------------------------
+            // Execute INSERT and get generated ApplicantId
+            // --------------------------------------------------------
+
             object? result =
-                await command.ExecuteScalarAsync(cancellationToken);
+                await command.ExecuteScalarAsync(
+                    cancellationToken);
+
 
             return Convert.ToInt32(result);
         }

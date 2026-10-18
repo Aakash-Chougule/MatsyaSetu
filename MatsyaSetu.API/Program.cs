@@ -2,7 +2,7 @@ using MatsyaSetu.API.Middleware;
 using MatsyaSetu.Application.Handlers;
 using MatsyaSetu.Application.Interfaces;
 using MatsyaSetu.Application.Services;
-using MatsyaSetu.Infrastructure.Data;
+using MatsyaSetu.Infrastructure.Database;
 using MatsyaSetu.Infrastructure.Repositories;
 using MatsyaSetu.Infrastructure.Services;
 using System.Security.Cryptography;
@@ -10,48 +10,115 @@ using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
+// ============================================================
+// Add services to the container
+// ============================================================
 
 builder.Services.AddControllers();
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
+
+// OpenAPI
 builder.Services.AddOpenApi();
-// Register our applicant service
+
+
+// ============================================================
+// Applicant services
+// ============================================================
+
+// Applicant service
 builder.Services.AddScoped<IApplicantService, ApplicantService>();
-// New instance for every resolution
+
+
+// ============================================================
+// Lifetime demonstration services
+// ============================================================
+
+// New instance every time it is requested
 builder.Services.AddTransient<ITransientService, TransientService>();
-// One instance per request
+
+// One instance per HTTP request
 builder.Services.AddScoped<IScopedService, ScopedService>();
-// Shared instance across requests
+
+// One shared instance for the application lifetime
 builder.Services.AddSingleton<ISingletonService, SingletonService>();
 
-// Read connection string from configuration
-string connectionString = builder.Configuration.GetConnectionString("MatsyaSetuDb") ?? throw new InvalidOperationException( "Database connection string is missing.");
 
-// Register our connection factory
-builder.Services.AddScoped<IDbConnectionFactory>(_ => new SqlConnectionFactory(connectionString));
-// Register repository using Dependency Injection
-builder.Services.AddScoped<IApplicantRepository,ApplicantRepository>();
-// Register WhatsApp service with HttpClient
-builder.Services.AddHttpClient<IWhatsAppService, WhatsAppService>();
+// ============================================================
+// Database
+// ============================================================
 
-builder.Services.AddScoped<IBotMenuRepository, BotMenuRepository>();
+// Centralized SQL connection factory
+builder.Services.AddScoped<
+    IDbConnectionFactory,
+    SqlConnectionFactory>();
 
-builder.Services.AddScoped<ISchemeRepository, SchemeRepository>();
 
-builder.Services.AddScoped<IBotActionDispatcher, BotActionDispatcher>();
+// ============================================================
+// Repositories
+// ============================================================
 
-builder.Services.AddScoped<IBotActionHandler, ShowSchemesHandler>();
-builder.Services.AddScoped<IBotActionHandler, StartApplicationHandler>();
-builder.Services.AddScoped<IBotActionHandler, CheckStatusHandler>();
-builder.Services.AddScoped<IBotActionHandler, HelpHandler>();
+builder.Services.AddScoped<
+    IApplicantRepository,
+    ApplicantRepository>();
+
+builder.Services.AddScoped<
+    IBotMenuRepository,
+    BotMenuRepository>();
+
+builder.Services.AddScoped<
+    ISchemeRepository,
+    SchemeRepository>();
+
+
+// ============================================================
+// WhatsApp
+// ============================================================
+
+// Register WhatsAppService with HttpClient
+builder.Services.AddHttpClient<
+    IWhatsAppService,
+    WhatsAppService>();
+
+
+// ============================================================
+// Bot action architecture
+// ============================================================
+
+// Dispatcher
+builder.Services.AddScoped<
+    IBotActionDispatcher,
+    BotActionDispatcher>();
+
+// Action handlers
+builder.Services.AddScoped<
+    IBotActionHandler,
+    ShowSchemesHandler>();
+
+builder.Services.AddScoped<
+    IBotActionHandler,
+    StartApplicationHandler>();
+
+builder.Services.AddScoped<
+    IBotActionHandler,
+    CheckStatusHandler>();
+
+builder.Services.AddScoped<
+    IBotActionHandler,
+    HelpHandler>();
+
+
+// ============================================================
+// Build application
+// ============================================================
 
 var app = builder.Build();
 
 
+// ============================================================
+// Temporary WhatsApp development endpoint
+// ============================================================
+// Remove this later after architecture/testing is completed.
+// ============================================================
 
-
-// Temporary endpoint for testing WhatsApp
-// Remove after successful testing.
 if (app.Environment.IsDevelopment())
 {
     app.MapPost(
@@ -62,7 +129,10 @@ if (app.Environment.IsDevelopment())
             IWhatsAppService whatsAppService,
             CancellationToken cancellationToken) =>
         {
-            // Authenticate our development request
+            // ----------------------------------------------------
+            // Authenticate development request
+            // ----------------------------------------------------
+
             string? expectedKey =
                 configuration["WhatsApp:DevTestKey"];
 
@@ -77,18 +147,25 @@ if (app.Environment.IsDevelopment())
             }
 
             byte[] expected =
-                Encoding.UTF8.GetBytes(expectedKey);
+                Encoding.UTF8.GetBytes(
+                    expectedKey);
 
             byte[] provided =
-                Encoding.UTF8.GetBytes(providedKey);
+                Encoding.UTF8.GetBytes(
+                    providedKey);
 
             if (!CryptographicOperations.FixedTimeEquals(
-                    expected, provided))
+                    expected,
+                    provided))
             {
                 return Results.Unauthorized();
             }
 
-            // Read our authorized test recipient
+
+            // ----------------------------------------------------
+            // Read authorized test recipient
+            // ----------------------------------------------------
+
             string? recipient =
                 configuration[
                     "WhatsApp:AllowedTestRecipientWaId"];
@@ -99,68 +176,109 @@ if (app.Environment.IsDevelopment())
                     "Test recipient is not configured.");
             }
 
-            // Call our existing WhatsAppService
+
+            // ----------------------------------------------------
+            // Send WhatsApp menu
+            // ----------------------------------------------------
+
             await whatsAppService.SendWelcomeMenuAsync(
                 recipient,
                 cancellationToken);
 
+
             return Results.Ok(new
             {
-                message = "Marathi menu submitted to Meta."
+                message =
+                    "Marathi menu submitted to Meta."
             });
         });
 }
 
 
+// ============================================================
+// Custom middleware
+// ============================================================
 
-
-
-
-// Add custom middleware to the pipeline
 app.UseMiddleware<CorrelationIdMiddleware>();
+
 app.UseMiddleware<GlobalExceptionMiddleware>();
 
-// Configure the HTTP request pipeline.
+
+// ============================================================
+// Development-only endpoints
+// ============================================================
 
 if (app.Environment.IsDevelopment())
 {
+    // --------------------------------------------------------
+    // OpenAPI
+    // --------------------------------------------------------
+
     app.MapOpenApi();
 
-    // Temporary API to test our database connection
-    app.MapGet("/api/dev/db-check",
-        async (IDbConnectionFactory connectionFactory) =>
+
+    // --------------------------------------------------------
+    // Temporary database connection test
+    // --------------------------------------------------------
+    // This now uses the new connection factory.
+    // The factory creates AND opens the connection.
+    // --------------------------------------------------------
+
+    app.MapGet(
+        "/api/dev/db-check",
+        async (
+            IDbConnectionFactory connectionFactory,
+            CancellationToken cancellationToken) =>
         {
-            // Step 1: Create a database connection
+            // Create and open SQL connection
             await using var connection =
-                connectionFactory.CreateConnection();
+                await connectionFactory
+                    .CreateOpenConnectionAsync(
+                        cancellationToken);
 
-            // Step 2: Open the SQL Server connection
-            await connection.OpenAsync();
 
-            // Step 3: Create an SQL command
+            // Create SQL command
             await using var command =
                 connection.CreateCommand();
 
-            // Step 4: Write our SQL query
-            command.CommandText = "SELECT DB_NAME()";
 
-            // Step 5: Execute the query
+            // SQL query
+            command.CommandText =
+                "SELECT DB_NAME()";
+
+
+            // Execute query
             var databaseName =
-                await command.ExecuteScalarAsync();
+                await command.ExecuteScalarAsync(
+                    cancellationToken);
 
-            // Step 6: Return the result
+
+            // Return result
             return Results.Ok(new
             {
-                message = "Database connected successfully",
-                database = databaseName
+                message =
+                    "Database connected successfully",
+
+                database =
+                    databaseName
             });
         });
 }
+
+
+// ============================================================
+// HTTP request pipeline
+// ============================================================
 
 app.UseHttpsRedirection();
 
 app.UseAuthorization();
 
 app.MapControllers();
+
+
+// ============================================================
+// Start application
+// ============================================================
 
 app.Run();

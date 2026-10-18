@@ -11,7 +11,6 @@ namespace MatsyaSetu.Infrastructure.Services
         private readonly IConfiguration _configuration;
         private readonly IBotMenuRepository _botMenuRepository;
 
-        // Constructor Dependency Injection
         public WhatsAppService(
             HttpClient httpClient,
             IConfiguration configuration,
@@ -30,23 +29,6 @@ namespace MatsyaSetu.Infrastructure.Services
             string message,
             CancellationToken cancellationToken = default)
         {
-            // Read Meta credentials from configuration/User Secrets
-            string accessToken =
-                _configuration["WhatsApp:AccessToken"]
-                ?? throw new InvalidOperationException(
-                    "WhatsApp AccessToken is missing.");
-
-            string phoneNumberId =
-                _configuration["WhatsApp:PhoneNumberId"]
-                ?? throw new InvalidOperationException(
-                    "WhatsApp PhoneNumberId is missing.");
-
-            // Meta WhatsApp Cloud API endpoint
-            string url =
-                $"https://graph.facebook.com/v26.0/" +
-                $"{phoneNumberId}/messages";
-
-            // Create normal text message
             var payload = new
             {
                 messaging_product = "whatsapp",
@@ -64,41 +46,9 @@ namespace MatsyaSetu.Infrastructure.Services
                 }
             };
 
-            // Create HTTP request
-            using var request =
-                new HttpRequestMessage(
-                    HttpMethod.Post,
-                    url);
-
-            // Add Meta Access Token
-            request.Headers.Authorization =
-                new AuthenticationHeaderValue(
-                    "Bearer",
-                    accessToken);
-
-            // Convert object into JSON
-            request.Content =
-                JsonContent.Create(payload);
-
-            // Send request to Meta
-            using var response =
-                await _httpClient.SendAsync(
-                    request,
-                    cancellationToken);
-
-            // Read Meta response
-            string responseBody =
-                await response.Content.ReadAsStringAsync(
-                    cancellationToken);
-
-            // If Meta returns error
-            if (!response.IsSuccessStatusCode)
-            {
-                throw new HttpRequestException(
-                    $"Meta API returned HTTP " +
-                    $"{(int)response.StatusCode}. " +
-                    $"Response: {responseBody}");
-            }
+            await SendMetaMessageAsync(
+                payload,
+                cancellationToken);
         }
 
         // ============================================================
@@ -109,7 +59,7 @@ namespace MatsyaSetu.Infrastructure.Services
             CancellationToken cancellationToken = default)
         {
             // --------------------------------------------------------
-            // 1. Read menu options from SQL Server
+            // 1. Get active menu items from database
             // --------------------------------------------------------
 
             var menuItems =
@@ -117,7 +67,6 @@ namespace MatsyaSetu.Infrastructure.Services
                     .GetActiveMenuItemsAsync(
                         cancellationToken);
 
-            // Don't send an empty WhatsApp menu
             if (menuItems == null ||
                 menuItems.Count == 0)
             {
@@ -126,27 +75,17 @@ namespace MatsyaSetu.Infrastructure.Services
             }
 
             // --------------------------------------------------------
-            // 2. Read Meta credentials
+            // 2. Build dynamic menu payload
             // --------------------------------------------------------
 
-            string accessToken =
-                _configuration["WhatsApp:AccessToken"]
-                ?? throw new InvalidOperationException(
-                    "WhatsApp AccessToken is missing.");
-
-            string phoneNumberId =
-                _configuration["WhatsApp:PhoneNumberId"]
-                ?? throw new InvalidOperationException(
-                    "WhatsApp PhoneNumberId is missing.");
-
-            // Meta WhatsApp Cloud API endpoint
-            string url =
-                $"https://graph.facebook.com/v26.0/" +
-                $"{phoneNumberId}/messages";
-
-            // --------------------------------------------------------
-            // 3. Create dynamic WhatsApp interactive menu
-            // --------------------------------------------------------
+            var rows = menuItems
+                .Take(10)
+                .Select(item => new
+                {
+                    id = item.OptionKey,
+                    title = item.MarathiTitle
+                })
+                .ToArray();
 
             var payload = new
             {
@@ -184,23 +123,7 @@ namespace MatsyaSetu.Infrastructure.Services
                             new
                             {
                                 title = "मुख्य सेवा",
-
-                                // ==================================
-                                // MENU NOW COMES FROM DATABASE
-                                // ==================================
-                                rows = menuItems
-                                    .Take(10)
-                                    .Select(item => new
-                                    {
-                                        // Example:
-                                        // scheme_info
-                                        id = item.OptionKey,
-
-                                        // Example:
-                                        // योजनेची माहिती
-                                        title = item.MarathiTitle
-                                    })
-                                    .ToArray()
+                                rows = rows
                             }
                         }
                     }
@@ -208,7 +131,45 @@ namespace MatsyaSetu.Infrastructure.Services
             };
 
             // --------------------------------------------------------
-            // 4. Create HTTP request
+            // 3. Send through common Meta API method
+            // --------------------------------------------------------
+
+            await SendMetaMessageAsync(
+                payload,
+                cancellationToken);
+        }
+
+        // ============================================================
+        // Common Meta WhatsApp API method
+        // ============================================================
+        private async Task SendMetaMessageAsync(
+            object payload,
+            CancellationToken cancellationToken)
+        {
+            // --------------------------------------------------------
+            // Read Meta configuration
+            // --------------------------------------------------------
+
+            string accessToken =
+                _configuration["WhatsApp:AccessToken"]
+                ?? throw new InvalidOperationException(
+                    "WhatsApp AccessToken is missing.");
+
+            string phoneNumberId =
+                _configuration["WhatsApp:PhoneNumberId"]
+                ?? throw new InvalidOperationException(
+                    "WhatsApp PhoneNumberId is missing.");
+
+            // --------------------------------------------------------
+            // Build Meta API endpoint
+            // --------------------------------------------------------
+
+            string url =
+                $"https://graph.facebook.com/v26.0/" +
+                $"{phoneNumberId}/messages";
+
+            // --------------------------------------------------------
+            // Create HTTP request
             // --------------------------------------------------------
 
             using var request =
@@ -216,18 +177,24 @@ namespace MatsyaSetu.Infrastructure.Services
                     HttpMethod.Post,
                     url);
 
-            // Add Meta Access Token
+            // --------------------------------------------------------
+            // Add authentication
+            // --------------------------------------------------------
+
             request.Headers.Authorization =
                 new AuthenticationHeaderValue(
                     "Bearer",
                     accessToken);
 
-            // Convert payload into JSON
+            // --------------------------------------------------------
+            // Add JSON body
+            // --------------------------------------------------------
+
             request.Content =
                 JsonContent.Create(payload);
 
             // --------------------------------------------------------
-            // 5. Send request to Meta
+            // Send request
             // --------------------------------------------------------
 
             using var response =
@@ -235,13 +202,16 @@ namespace MatsyaSetu.Infrastructure.Services
                     request,
                     cancellationToken);
 
+            // --------------------------------------------------------
             // Read Meta response
+            // --------------------------------------------------------
+
             string responseBody =
                 await response.Content.ReadAsStringAsync(
                     cancellationToken);
 
             // --------------------------------------------------------
-            // 6. Handle Meta error
+            // Handle Meta API error
             // --------------------------------------------------------
 
             if (!response.IsSuccessStatusCode)

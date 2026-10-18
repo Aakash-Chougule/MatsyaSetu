@@ -1,28 +1,26 @@
-﻿using MatsyaSetu.Application.Interfaces;
+﻿using System.Data;
+using MatsyaSetu.Application.Interfaces;
 using MatsyaSetu.Application.Models;
-using Microsoft.Data.SqlClient;
-using Microsoft.Extensions.Configuration;
 
 namespace MatsyaSetu.Infrastructure.Repositories
 {
     public class SchemeRepository : ISchemeRepository
     {
-        private readonly string _connectionString;
+        private readonly IDbConnectionFactory _connectionFactory;
 
-        public SchemeRepository(IConfiguration configuration)
+        public SchemeRepository(
+            IDbConnectionFactory connectionFactory)
         {
-            _connectionString =
-                configuration.GetConnectionString("MatsyaSetuDB")
-                ?? throw new InvalidOperationException(
-                    "Database connection string is missing.");
+            _connectionFactory = connectionFactory;
         }
 
+        // ============================================================
+        // Get all active schemes
+        // ============================================================
         public async Task<List<Scheme>> GetActiveSchemesAsync(
             CancellationToken cancellationToken = default)
         {
-            List<Scheme> schemes = new();
-
-            string query = @"
+            const string query = @"
                 SELECT
                     SchemeId,
                     SchemeCode,
@@ -36,67 +34,96 @@ namespace MatsyaSetu.Infrastructure.Repositories
                 WHERE IsActive = 1
                 ORDER BY DisplayOrder;";
 
-            await using SqlConnection con =
-                new SqlConnection(_connectionString);
+            var schemes = new List<Scheme>();
 
-            await using SqlCommand cmd =
-                new SqlCommand(query, con);
+            // Factory creates AND opens the connection
+            await using var connection =
+                await _connectionFactory
+                    .CreateOpenConnectionAsync(
+                        cancellationToken);
 
-            await con.OpenAsync(cancellationToken);
+            // Create SQL command
+            await using var command =
+                connection.CreateCommand();
 
-            await using SqlDataReader reader =
-                await cmd.ExecuteReaderAsync(cancellationToken);
+            command.CommandText = query;
 
-            while (await reader.ReadAsync(cancellationToken))
+            // Execute query
+            await using var reader =
+                await command.ExecuteReaderAsync(
+                    cancellationToken);
+
+            // Map database rows
+            while (await reader.ReadAsync(
+                cancellationToken))
             {
-                Scheme scheme = new Scheme
-                {
-                    SchemeId =
-                        reader.GetInt32(
-                            reader.GetOrdinal("SchemeId")),
-
-                    SchemeCode =
-                        reader.GetString(
-                            reader.GetOrdinal("SchemeCode")),
-
-                    SchemeNameMarathi =
-                        reader.GetString(
-                            reader.GetOrdinal("SchemeNameMarathi")),
-
-                    ShortDescriptionMarathi =
-                        reader.IsDBNull(
-                            reader.GetOrdinal("ShortDescriptionMarathi"))
-                            ? null
-                            : reader.GetString(
-                                reader.GetOrdinal("ShortDescriptionMarathi")),
-
-                    EligibilityMarathi =
-                        reader.IsDBNull(
-                            reader.GetOrdinal("EligibilityMarathi"))
-                            ? null
-                            : reader.GetString(
-                                reader.GetOrdinal("EligibilityMarathi")),
-
-                    SourceUrl =
-                        reader.IsDBNull(
-                            reader.GetOrdinal("SourceUrl"))
-                            ? null
-                            : reader.GetString(
-                                reader.GetOrdinal("SourceUrl")),
-
-                    DisplayOrder =
-                        reader.GetInt32(
-                            reader.GetOrdinal("DisplayOrder")),
-
-                    IsActive =
-                        reader.GetBoolean(
-                            reader.GetOrdinal("IsActive"))
-                };
-
-                schemes.Add(scheme);
+                schemes.Add(
+                    MapScheme(reader));
             }
 
             return schemes;
+        }
+
+        // ============================================================
+        // Map database row to Scheme model
+        // ============================================================
+        private static Scheme MapScheme(
+            IDataRecord reader)
+        {
+            return new Scheme
+            {
+                SchemeId =
+                    reader.GetInt32(
+                        reader.GetOrdinal(
+                            "SchemeId")),
+
+                SchemeCode =
+                    reader.GetString(
+                        reader.GetOrdinal(
+                            "SchemeCode")),
+
+                SchemeNameMarathi =
+                    reader.GetString(
+                        reader.GetOrdinal(
+                            "SchemeNameMarathi")),
+
+                ShortDescriptionMarathi =
+                    reader.IsDBNull(
+                        reader.GetOrdinal(
+                            "ShortDescriptionMarathi"))
+                    ? null
+                    : reader.GetString(
+                        reader.GetOrdinal(
+                            "ShortDescriptionMarathi")),
+
+                EligibilityMarathi =
+                    reader.IsDBNull(
+                        reader.GetOrdinal(
+                            "EligibilityMarathi"))
+                    ? null
+                    : reader.GetString(
+                        reader.GetOrdinal(
+                            "EligibilityMarathi")),
+
+                SourceUrl =
+                    reader.IsDBNull(
+                        reader.GetOrdinal(
+                            "SourceUrl"))
+                    ? null
+                    : reader.GetString(
+                        reader.GetOrdinal(
+                            "SourceUrl")),
+
+                DisplayOrder =
+                    reader.GetInt32(
+                        reader.GetOrdinal(
+                            "DisplayOrder")),
+
+                IsActive =
+                    reader.GetBoolean(
+                        reader.GetOrdinal(
+                            "IsActive"))
+            };
         }
     }
 }
