@@ -28,18 +28,6 @@ builder.Services.AddOpenApi();
 builder.Services.AddScoped<IApplicantService, ApplicantService>();
 
 
-// ============================================================
-// Lifetime demonstration services
-// ============================================================
-
-// New instance every time it is requested
-builder.Services.AddTransient<ITransientService, TransientService>();
-
-// One instance per HTTP request
-builder.Services.AddScoped<IScopedService, ScopedService>();
-
-// One shared instance for the application lifetime
-builder.Services.AddSingleton<ISingletonService, SingletonService>();
 
 
 // ============================================================
@@ -271,6 +259,10 @@ if (app.Environment.IsDevelopment())
 // ============================================================
 
 app.UseHttpsRedirection();
+
+// Allow public files from wwwroot to be accessed
+// PDFs will be served with Content-Type: application/pdf
+app.UseStaticFiles();
 
 app.UseAuthorization();
 

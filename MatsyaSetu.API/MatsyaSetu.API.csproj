@@ -17,4 +17,8 @@
     <ProjectReference Include="..\MatsyaSetu.Infrastructure\MatsyaSetu.Infrastructure.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Folder Include="wwwroot\" />
+  </ItemGroup>
+
 </Project>

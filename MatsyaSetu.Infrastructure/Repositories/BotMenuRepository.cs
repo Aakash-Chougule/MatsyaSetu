@@ -15,11 +15,9 @@ namespace MatsyaSetu.Infrastructure.Repositories
             _connectionFactory = connectionFactory;
         }
 
-        // ============================================================
-        // Get all active menu items
-        // ============================================================
         public async Task<List<BotMenuItem>> GetActiveMenuItemsAsync(
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            int? parentMenuItemId = null)
         {
             const string query = @"
                 SELECT
@@ -28,40 +26,57 @@ namespace MatsyaSetu.Infrastructure.Repositories
                     MarathiTitle,
                     ActionCode,
                     DisplayOrder,
-                    IsActive
+                    IsActive,
+                    ParentMenuItemId,
+                    ResponseType,
+                    ResponseMessageMarathi,
+                    DocumentUrl,
+                    DocumentFileName
                 FROM dbo.BotMenuItems
                 WHERE IsActive = 1
+                  AND (
+                        (@ParentMenuItemId IS NULL
+                         AND ParentMenuItemId IS NULL)
+                        OR
+                        ParentMenuItemId = @ParentMenuItemId
+                      )
                 ORDER BY DisplayOrder;";
 
             var menuItems = new List<BotMenuItem>();
 
             await using var connection =
                 await _connectionFactory
-                    .CreateOpenConnectionAsync(
-                        cancellationToken);
+                    .CreateOpenConnectionAsync(cancellationToken);
 
             await using var command =
                 connection.CreateCommand();
 
             command.CommandText = query;
 
+            var parentParameter =
+                new SqlParameter(
+                    "@ParentMenuItemId",
+                    SqlDbType.Int)
+                {
+                    Value = parentMenuItemId.HasValue
+                        ? parentMenuItemId.Value
+                        : DBNull.Value
+                };
+
+            command.Parameters.Add(parentParameter);
+
             await using var reader =
                 await command.ExecuteReaderAsync(
                     cancellationToken);
 
-            while (await reader.ReadAsync(
-                cancellationToken))
+            while (await reader.ReadAsync(cancellationToken))
             {
-                menuItems.Add(
-                    MapBotMenuItem(reader));
+                menuItems.Add(MapBotMenuItem(reader));
             }
 
             return menuItems;
         }
 
-        // ============================================================
-        // Get menu item by OptionKey
-        // ============================================================
         public async Task<BotMenuItem?> GetByOptionKeyAsync(
             string optionKey,
             CancellationToken cancellationToken = default)
@@ -73,22 +88,25 @@ namespace MatsyaSetu.Infrastructure.Repositories
                     MarathiTitle,
                     ActionCode,
                     DisplayOrder,
-                    IsActive
+                    IsActive,
+                    ParentMenuItemId,
+                    ResponseType,
+                    ResponseMessageMarathi,
+                    DocumentUrl,
+                    DocumentFileName
                 FROM dbo.BotMenuItems
                 WHERE OptionKey = @OptionKey
                   AND IsActive = 1;";
 
             await using var connection =
                 await _connectionFactory
-                    .CreateOpenConnectionAsync(
-                        cancellationToken);
+                    .CreateOpenConnectionAsync(cancellationToken);
 
             await using var command =
                 connection.CreateCommand();
 
             command.CommandText = query;
 
-            // Parameterized query
             var parameter =
                 new SqlParameter(
                     "@OptionKey",
@@ -104,8 +122,7 @@ namespace MatsyaSetu.Infrastructure.Repositories
                 await command.ExecuteReaderAsync(
                     cancellationToken);
 
-            if (!await reader.ReadAsync(
-                cancellationToken))
+            if (!await reader.ReadAsync(cancellationToken))
             {
                 return null;
             }
@@ -113,43 +130,76 @@ namespace MatsyaSetu.Infrastructure.Repositories
             return MapBotMenuItem(reader);
         }
 
-        // ============================================================
-        // Map database row to BotMenuItem
-        // ============================================================
         private static BotMenuItem MapBotMenuItem(
             IDataRecord reader)
         {
+            int parentMenuItemIdOrdinal =
+                reader.GetOrdinal("ParentMenuItemId");
+
+            int responseMessageOrdinal =
+                reader.GetOrdinal(
+                    "ResponseMessageMarathi");
+
+            int documentUrlOrdinal =
+                reader.GetOrdinal("DocumentUrl");
+
+            int documentFileNameOrdinal =
+                reader.GetOrdinal(
+                    "DocumentFileName");
+
             return new BotMenuItem
             {
                 MenuItemId =
                     reader.GetInt32(
-                        reader.GetOrdinal(
-                            "MenuItemId")),
+                        reader.GetOrdinal("MenuItemId")),
 
                 OptionKey =
                     reader.GetString(
-                        reader.GetOrdinal(
-                            "OptionKey")),
+                        reader.GetOrdinal("OptionKey")),
 
                 MarathiTitle =
                     reader.GetString(
-                        reader.GetOrdinal(
-                            "MarathiTitle")),
+                        reader.GetOrdinal("MarathiTitle")),
 
                 ActionCode =
                     reader.GetString(
-                        reader.GetOrdinal(
-                            "ActionCode")),
+                        reader.GetOrdinal("ActionCode")),
 
                 DisplayOrder =
                     reader.GetInt32(
-                        reader.GetOrdinal(
-                            "DisplayOrder")),
+                        reader.GetOrdinal("DisplayOrder")),
 
                 IsActive =
                     reader.GetBoolean(
-                        reader.GetOrdinal(
-                            "IsActive"))
+                        reader.GetOrdinal("IsActive")),
+
+                ParentMenuItemId =
+                    reader.IsDBNull(parentMenuItemIdOrdinal)
+                        ? null
+                        : reader.GetInt32(
+                            parentMenuItemIdOrdinal),
+
+                ResponseType =
+                    reader.GetString(
+                        reader.GetOrdinal("ResponseType")),
+
+                ResponseMessageMarathi =
+                    reader.IsDBNull(responseMessageOrdinal)
+                        ? null
+                        : reader.GetString(
+                            responseMessageOrdinal),
+
+                DocumentUrl =
+                    reader.IsDBNull(documentUrlOrdinal)
+                        ? null
+                        : reader.GetString(
+                            documentUrlOrdinal),
+
+                DocumentFileName =
+                    reader.IsDBNull(documentFileNameOrdinal)
+                        ? null
+                        : reader.GetString(
+                            documentFileNameOrdinal)
             };
         }
     }

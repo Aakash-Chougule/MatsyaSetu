@@ -264,7 +264,7 @@ namespace MatsyaSetu.API.Controllers
                             in messages.EnumerateArray())
                         {
                             if (message.ValueKind !=
-                                JsonValueKind.Object)
+                                    JsonValueKind.Object)
                             {
                                 continue;
                             }
@@ -273,6 +273,12 @@ namespace MatsyaSetu.API.Controllers
                                 GetString(
                                     message,
                                     "from");
+
+                            if (string.IsNullOrWhiteSpace(
+                                    senderWaId))
+                            {
+                                continue;
+                            }
 
                             // ------------------------------------------------
                             // Development whitelist
@@ -331,7 +337,7 @@ namespace MatsyaSetu.API.Controllers
                                 {
                                     await _whatsAppService
                                         .SendWelcomeMenuAsync(
-                                            senderWaId!,
+                                            senderWaId,
                                             cancellationToken);
 
                                     _logger.LogInformation(
@@ -397,7 +403,10 @@ namespace MatsyaSetu.API.Controllers
                                             selectionId,
                                             cancellationToken);
 
+                                // ------------------------------------------------
                                 // Option does not exist / disabled
+                                // ------------------------------------------------
+
                                 if (selectedMenuItem == null)
                                 {
                                     _logger.LogWarning(
@@ -407,6 +416,77 @@ namespace MatsyaSetu.API.Controllers
                                     continue;
                                 }
 
+                                // ============================================
+                                // 7. Handle SUBMENU
+                                // ============================================
+
+                                if (string.Equals(
+                                        selectedMenuItem.ResponseType,
+                                        "SUBMENU",
+                                        StringComparison.OrdinalIgnoreCase))
+                                {
+                                    _logger.LogInformation(
+                                        "Opening submenu for MenuItemId: {MenuItemId}",
+                                        selectedMenuItem.MenuItemId);
+
+                                    await _whatsAppService
+                                        .SendMenuAsync(
+                                            senderWaId,
+                                            cancellationToken,
+                                            selectedMenuItem.MenuItemId);
+
+                                    continue;
+                                }
+                                if (string.Equals(
+        selectedMenuItem.ResponseType,
+        "DOCUMENT",
+        StringComparison.OrdinalIgnoreCase))
+                                {
+                                    _logger.LogInformation(
+                                        "Document response selected for MenuItemId: {MenuItemId}",
+                                        selectedMenuItem.MenuItemId);
+
+                                    // Send Marathi message first
+                                    if (!string.IsNullOrWhiteSpace(
+                                            selectedMenuItem.ResponseMessageMarathi))
+                                    {
+                                        await _whatsAppService
+                                            .SendTextMessageAsync(
+                                                senderWaId,
+                                                selectedMenuItem.ResponseMessageMarathi,
+                                                cancellationToken);
+                                    }
+
+                                    // Document URL is required for PDF delivery
+                                    if (string.IsNullOrWhiteSpace(
+                                            selectedMenuItem.DocumentUrl))
+                                    {
+                                        _logger.LogWarning(
+                                            "Document URL is missing for MenuItemId: {MenuItemId}",
+                                            selectedMenuItem.MenuItemId);
+
+                                        continue;
+                                    }
+
+                                    await _whatsAppService
+                                        .SendDocumentMessageAsync(
+                                            senderWaId,
+                                            selectedMenuItem.DocumentUrl,
+                                            selectedMenuItem.DocumentFileName,
+                                            null,
+                                            cancellationToken);
+
+                                    _logger.LogInformation(
+                                        "Document sent for MenuItemId: {MenuItemId}",
+                                        selectedMenuItem.MenuItemId);
+
+                                    continue;
+                                }
+
+                                // ============================================
+                                // 8. Get ActionCode
+                                // ============================================
+
                                 string actionCode =
                                     selectedMenuItem.ActionCode;
 
@@ -415,13 +495,13 @@ namespace MatsyaSetu.API.Controllers
                                     actionCode);
 
                                 // ============================================
-                                // 7. Dispatch action to appropriate handler
+                                // 9. Dispatch action to appropriate handler
                                 // ============================================
 
                                 var context =
                                     new BotActionContext
                                     {
-                                        SenderWaId = senderWaId!,
+                                        SenderWaId = senderWaId,
                                         OptionKey = selectionId
                                     };
 
@@ -452,7 +532,7 @@ namespace MatsyaSetu.API.Controllers
 
                                 await _whatsAppService
                                     .SendTextMessageAsync(
-                                        senderWaId!,
+                                        senderWaId,
                                         reply,
                                         cancellationToken);
 
@@ -480,9 +560,17 @@ namespace MatsyaSetu.API.Controllers
         // Helper method
         // ============================================================
 
-        private static string? GetString(JsonElement parent, string propertyName)
+        private static string? GetString(
+            JsonElement parent,
+            string propertyName)
         {
-            if (parent.ValueKind != JsonValueKind.Object || !parent.TryGetProperty(propertyName, out var element) || element.ValueKind != JsonValueKind.String)
+            if (parent.ValueKind !=
+                    JsonValueKind.Object ||
+                !parent.TryGetProperty(
+                    propertyName,
+                    out var element) ||
+                element.ValueKind !=
+                    JsonValueKind.String)
             {
                 return null;
             }

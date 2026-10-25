@@ -22,8 +22,9 @@ namespace MatsyaSetu.Infrastructure.Services
         }
 
         // ============================================================
-        // Send normal WhatsApp text message
+        // Send normal text message
         // ============================================================
+
         public async Task SendTextMessageAsync(
             string recipientWaId,
             string message,
@@ -32,13 +33,9 @@ namespace MatsyaSetu.Infrastructure.Services
             var payload = new
             {
                 messaging_product = "whatsapp",
-
                 recipient_type = "individual",
-
                 to = recipientWaId,
-
                 type = "text",
-
                 text = new
                 {
                     preview_url = false,
@@ -52,31 +49,38 @@ namespace MatsyaSetu.Infrastructure.Services
         }
 
         // ============================================================
-        // Send WhatsApp interactive welcome menu
+        // Send main menu
         // ============================================================
+
         public async Task SendWelcomeMenuAsync(
             string recipientWaId,
             CancellationToken cancellationToken = default)
         {
-            // --------------------------------------------------------
-            // 1. Get active menu items from database
-            // --------------------------------------------------------
+            await SendMenuAsync(
+                recipientWaId,
+                cancellationToken,
+                null);
+        }
 
+        // ============================================================
+        // Send menu
+        // ============================================================
+
+        public async Task SendMenuAsync(
+            string recipientWaId,
+            CancellationToken cancellationToken = default,
+            int? parentMenuItemId = null)
+        {
             var menuItems =
-                await _botMenuRepository
-                    .GetActiveMenuItemsAsync(
-                        cancellationToken);
+                await _botMenuRepository.GetActiveMenuItemsAsync(
+                    cancellationToken,
+                    parentMenuItemId);
 
-            if (menuItems == null ||
-                menuItems.Count == 0)
+            if (menuItems == null || menuItems.Count == 0)
             {
                 throw new InvalidOperationException(
                     "No active WhatsApp menu items found in database.");
             }
-
-            // --------------------------------------------------------
-            // 2. Build dynamic menu payload
-            // --------------------------------------------------------
 
             var rows = menuItems
                 .Take(10)
@@ -87,42 +91,40 @@ namespace MatsyaSetu.Infrastructure.Services
                 })
                 .ToArray();
 
+            string bodyText =
+                parentMenuItemId == null
+                    ? "नमस्कार! 🙏\n" +
+                      "मत्स्यसेतू सेवेमध्ये आपले स्वागत आहे.\n\n" +
+                      "कृपया खालील पर्यायांपैकी एक निवडा."
+                    : "कृपया खालील पर्यायांपैकी एक निवडा.";
+
             var payload = new
             {
                 messaging_product = "whatsapp",
-
                 recipient_type = "individual",
-
                 to = recipientWaId,
-
                 type = "interactive",
-
                 interactive = new
                 {
                     type = "list",
-
                     body = new
                     {
-                        text =
-                            "नमस्कार! 🙏\n" +
-                            "मत्स्यसेतू सेवेमध्ये आपले स्वागत आहे.\n\n" +
-                            "कृपया खालील पर्यायांपैकी एक निवडा."
+                        text = bodyText
                     },
-
                     footer = new
                     {
                         text = "ही चाचणी सेवा आहे."
                     },
-
                     action = new
                     {
-                        button = "सेवा निवडा",
-
+                        button = "पर्याय निवडा",
                         sections = new[]
                         {
                             new
                             {
-                                title = "मुख्य सेवा",
+                                title = parentMenuItemId == null
+                                    ? "मुख्य सेवा"
+                                    : "अर्ज सेवा",
                                 rows = rows
                             }
                         }
@@ -130,9 +132,52 @@ namespace MatsyaSetu.Infrastructure.Services
                 }
             };
 
-            // --------------------------------------------------------
-            // 3. Send through common Meta API method
-            // --------------------------------------------------------
+            await SendMetaMessageAsync(
+                payload,
+                cancellationToken);
+        }
+
+        // ============================================================
+        // Send document / PDF message
+        // ============================================================
+
+        public async Task SendDocumentMessageAsync(
+            string recipientWaId,
+            string documentUrl,
+            string? documentFileName = null,
+            string? caption = null,
+            CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(documentUrl))
+            {
+                throw new ArgumentException(
+                    "Document URL is required.",
+                    nameof(documentUrl));
+            }
+
+            var document = new Dictionary<string, object>
+            {
+                ["link"] = documentUrl
+            };
+
+            if (!string.IsNullOrWhiteSpace(documentFileName))
+            {
+                document["filename"] = documentFileName;
+            }
+
+            if (!string.IsNullOrWhiteSpace(caption))
+            {
+                document["caption"] = caption;
+            }
+
+            var payload = new
+            {
+                messaging_product = "whatsapp",
+                recipient_type = "individual",
+                to = recipientWaId,
+                type = "document",
+                document = document
+            };
 
             await SendMetaMessageAsync(
                 payload,
@@ -140,16 +185,13 @@ namespace MatsyaSetu.Infrastructure.Services
         }
 
         // ============================================================
-        // Common Meta WhatsApp API method
+        // Common Meta API sender
         // ============================================================
+
         private async Task SendMetaMessageAsync(
             object payload,
             CancellationToken cancellationToken)
         {
-            // --------------------------------------------------------
-            // Read Meta configuration
-            // --------------------------------------------------------
-
             string accessToken =
                 _configuration["WhatsApp:AccessToken"]
                 ?? throw new InvalidOperationException(
@@ -160,59 +202,31 @@ namespace MatsyaSetu.Infrastructure.Services
                 ?? throw new InvalidOperationException(
                     "WhatsApp PhoneNumberId is missing.");
 
-            // --------------------------------------------------------
-            // Build Meta API endpoint
-            // --------------------------------------------------------
-
             string url =
                 $"https://graph.facebook.com/v26.0/" +
                 $"{phoneNumberId}/messages";
-
-            // --------------------------------------------------------
-            // Create HTTP request
-            // --------------------------------------------------------
 
             using var request =
                 new HttpRequestMessage(
                     HttpMethod.Post,
                     url);
 
-            // --------------------------------------------------------
-            // Add authentication
-            // --------------------------------------------------------
-
             request.Headers.Authorization =
                 new AuthenticationHeaderValue(
                     "Bearer",
                     accessToken);
 
-            // --------------------------------------------------------
-            // Add JSON body
-            // --------------------------------------------------------
-
             request.Content =
                 JsonContent.Create(payload);
-
-            // --------------------------------------------------------
-            // Send request
-            // --------------------------------------------------------
 
             using var response =
                 await _httpClient.SendAsync(
                     request,
                     cancellationToken);
 
-            // --------------------------------------------------------
-            // Read Meta response
-            // --------------------------------------------------------
-
             string responseBody =
                 await response.Content.ReadAsStringAsync(
                     cancellationToken);
-
-            // --------------------------------------------------------
-            // Handle Meta API error
-            // --------------------------------------------------------
 
             if (!response.IsSuccessStatusCode)
             {

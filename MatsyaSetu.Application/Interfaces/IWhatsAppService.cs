@@ -1,17 +1,26 @@
-﻿
-namespace MatsyaSetu.Application.Interfaces
+﻿namespace MatsyaSetu.Application.Interfaces
 {
     public interface IWhatsAppService
     {
-        // Send the original interactive welcome menu
+        Task SendTextMessageAsync(
+            string recipientWaId,
+            string message,
+            CancellationToken cancellationToken = default);
+
         Task SendWelcomeMenuAsync(
             string recipientWaId,
             CancellationToken cancellationToken = default);
 
-        // Send a normal WhatsApp text response
-        Task SendTextMessageAsync(
+        Task SendMenuAsync(
             string recipientWaId,
-            string message,
+            CancellationToken cancellationToken = default,
+            int? parentMenuItemId = null);
+
+        Task SendDocumentMessageAsync(
+            string recipientWaId,
+            string documentUrl,
+            string? documentFileName = null,
+            string? caption = null,
             CancellationToken cancellationToken = default);
     }
 }
