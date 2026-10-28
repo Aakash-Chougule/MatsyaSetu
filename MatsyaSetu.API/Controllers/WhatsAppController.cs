@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿
+using Microsoft.AspNetCore.Mvc;
 using MatsyaSetu.Application.Interfaces;
 using MatsyaSetu.Application.Models;
 using System.Security.Cryptography;
@@ -16,9 +17,11 @@ namespace MatsyaSetu.API.Controllers
         private readonly IWhatsAppService _whatsAppService;
         private readonly IBotMenuRepository _botMenuRepository;
         private readonly IBotActionDispatcher _botActionDispatcher;
+        private readonly IWhatsAppCustomerRepository _customerRepository;
+        private readonly IBotMessageTemplateRepository _messageTemplateRepository;
 
         // ============================================================
-        // Constructor Dependency Injection
+        // CONSTRUCTOR - DEPENDENCY INJECTION
         // ============================================================
 
         public WhatsAppController(
@@ -26,17 +29,21 @@ namespace MatsyaSetu.API.Controllers
             ILogger<WhatsAppController> logger,
             IWhatsAppService whatsAppService,
             IBotMenuRepository botMenuRepository,
-            IBotActionDispatcher botActionDispatcher)
+            IBotActionDispatcher botActionDispatcher,
+            IWhatsAppCustomerRepository customerRepository,
+            IBotMessageTemplateRepository messageTemplateRepository)
         {
             _configuration = configuration;
             _logger = logger;
             _whatsAppService = whatsAppService;
             _botMenuRepository = botMenuRepository;
             _botActionDispatcher = botActionDispatcher;
+            _customerRepository = customerRepository;
+            _messageTemplateRepository = messageTemplateRepository;
         }
 
         // ============================================================
-        // 1. GET - Meta webhook verification
+        // 1. VERIFY META WEBHOOK
         // ============================================================
 
         [HttpGet]
@@ -56,39 +63,30 @@ namespace MatsyaSetu.API.Controllers
                     StringComparison.Ordinal) &&
                 challenge != null)
             {
-                return Content(
-                    challenge,
-                    "text/plain");
+                return Content(challenge, "text/plain");
             }
 
             return StatusCode(403);
         }
 
         // ============================================================
-        // 2. POST - Receive WhatsApp webhook events
+        // 2. RECEIVE WHATSAPP WEBHOOK
         // ============================================================
 
         [HttpPost]
         public async Task<IActionResult> ReceiveWebhook(
             CancellationToken cancellationToken)
         {
-            // --------------------------------------------------------
-            // Read Meta App Secret
-            // --------------------------------------------------------
-
             string appSecret =
                 _configuration["WhatsApp:AppSecret"]
                 ?? throw new InvalidOperationException(
                     "WhatsApp AppSecret is missing.");
 
-            // --------------------------------------------------------
-            // Signature supplied by Meta
-            // --------------------------------------------------------
-
             string? signature =
                 Request.Headers["X-Hub-Signature-256"]
                     .FirstOrDefault();
 
+            // Validate signature header
             if (string.IsNullOrWhiteSpace(signature) ||
                 !signature.StartsWith(
                     "sha256=",
@@ -97,39 +95,27 @@ namespace MatsyaSetu.API.Controllers
                 return Unauthorized();
             }
 
-            // --------------------------------------------------------
-            // Read original webhook body
-            // --------------------------------------------------------
-
-            using var stream =
-                new MemoryStream();
+            // Read original request body
+            using var stream = new MemoryStream();
 
             await Request.Body.CopyToAsync(
                 stream,
                 cancellationToken);
 
-            byte[] payload =
-                stream.ToArray();
+            byte[] payload = stream.ToArray();
 
-            // --------------------------------------------------------
-            // Verify HMAC SHA256 signature
-            // --------------------------------------------------------
+            // Verify Meta HMAC SHA256 signature
+            using var hmac = new HMACSHA256(
+                Encoding.UTF8.GetBytes(appSecret));
 
-            using var hmac =
-                new HMACSHA256(
-                    Encoding.UTF8.GetBytes(
-                        appSecret));
-
-            byte[] expectedHash =
-                hmac.ComputeHash(payload);
+            byte[] expectedHash = hmac.ComputeHash(payload);
 
             byte[] receivedHash;
 
             try
             {
                 receivedHash =
-                    Convert.FromHexString(
-                        signature[7..]);
+                    Convert.FromHexString(signature[7..]);
             }
             catch (FormatException)
             {
@@ -150,7 +136,7 @@ namespace MatsyaSetu.API.Controllers
                 "Verified WhatsApp webhook received.");
 
             // ========================================================
-            // 3. Process WhatsApp JSON
+            // 3. PROCESS WHATSAPP JSON
             // ========================================================
 
             try
@@ -158,12 +144,7 @@ namespace MatsyaSetu.API.Controllers
                 using JsonDocument document =
                     JsonDocument.Parse(payload);
 
-                JsonElement root =
-                    document.RootElement;
-
-                // ----------------------------------------------------
-                // Check webhook object
-                // ----------------------------------------------------
+                JsonElement root = document.RootElement;
 
                 if (GetString(root, "object") !=
                     "whatsapp_business_account")
@@ -171,58 +152,38 @@ namespace MatsyaSetu.API.Controllers
                     return BadRequest();
                 }
 
-                // ----------------------------------------------------
-                // Check entry array
-                // ----------------------------------------------------
-
                 if (!root.TryGetProperty(
                         "entry",
                         out var entries) ||
-                    entries.ValueKind !=
-                    JsonValueKind.Array)
+                    entries.ValueKind != JsonValueKind.Array)
                 {
                     return Ok();
                 }
 
-                foreach (var entry
-                    in entries.EnumerateArray())
+                foreach (var entry in entries.EnumerateArray())
                 {
-                    if (entry.ValueKind !=
-                            JsonValueKind.Object ||
+                    if (entry.ValueKind != JsonValueKind.Object ||
                         !entry.TryGetProperty(
                             "changes",
                             out var changes) ||
-                        changes.ValueKind !=
-                            JsonValueKind.Array)
+                        changes.ValueKind != JsonValueKind.Array)
                     {
                         continue;
                     }
 
-                    foreach (var change
-                        in changes.EnumerateArray())
+                    foreach (var change in changes.EnumerateArray())
                     {
-                        // ------------------------------------------------
-                        // We only process message events
-                        // ------------------------------------------------
-
-                        if (change.ValueKind !=
-                                JsonValueKind.Object ||
-                            GetString(
-                                change,
-                                "field") != "messages" ||
+                        if (change.ValueKind != JsonValueKind.Object ||
+                            GetString(change, "field") != "messages" ||
                             !change.TryGetProperty(
                                 "value",
                                 out var value) ||
-                            value.ValueKind !=
-                                JsonValueKind.Object)
+                            value.ValueKind != JsonValueKind.Object)
                         {
                             continue;
                         }
 
-                        // ------------------------------------------------
-                        // Validate receiving WhatsApp number
-                        // ------------------------------------------------
-
+                        // Validate receiving phone number ID
                         if (!value.TryGetProperty(
                                 "metadata",
                                 out var metadata))
@@ -231,79 +192,228 @@ namespace MatsyaSetu.API.Controllers
                         }
 
                         string? receivingPhoneId =
-                            GetString(
-                                metadata,
-                                "phone_number_id");
+                            GetString(metadata, "phone_number_id");
 
                         string? configuredPhoneId =
-                            _configuration[
-                                "WhatsApp:PhoneNumberId"];
+                            _configuration["WhatsApp:PhoneNumberId"];
 
-                        if (string.IsNullOrWhiteSpace(
-                                configuredPhoneId) ||
-                            receivingPhoneId !=
-                                configuredPhoneId)
+                        if (string.IsNullOrWhiteSpace(configuredPhoneId) ||
+                            receivingPhoneId != configuredPhoneId)
                         {
                             continue;
                         }
 
-                        // ------------------------------------------------
                         // Get incoming messages
-                        // ------------------------------------------------
-
                         if (!value.TryGetProperty(
                                 "messages",
                                 out var messages) ||
-                            messages.ValueKind !=
-                                JsonValueKind.Array)
+                            messages.ValueKind != JsonValueKind.Array)
                         {
                             continue;
                         }
 
-                        foreach (var message
-                            in messages.EnumerateArray())
+                        foreach (var message in messages.EnumerateArray())
                         {
-                            if (message.ValueKind !=
-                                    JsonValueKind.Object)
+                            if (message.ValueKind != JsonValueKind.Object)
                             {
                                 continue;
                             }
 
                             string? senderWaId =
-                                GetString(
-                                    message,
-                                    "from");
+                                GetString(message, "from");
 
-                            if (string.IsNullOrWhiteSpace(
-                                    senderWaId))
+                            if (string.IsNullOrWhiteSpace(senderWaId))
                             {
                                 continue;
                             }
 
-                            // ------------------------------------------------
-                            // Development whitelist
-                            // ------------------------------------------------
+                            // ============================================
+                            // 4. DEVELOPMENT WHITELIST
+                            // ============================================
 
                             string? allowedRecipient =
                                 _configuration[
                                     "WhatsApp:AllowedTestRecipientWaId"];
 
-                            if (string.IsNullOrWhiteSpace(
-                                    allowedRecipient) ||
-                                senderWaId !=
-                                    allowedRecipient)
+                            if (string.IsNullOrWhiteSpace(allowedRecipient) ||
+                                senderWaId != allowedRecipient)
                             {
                                 continue;
                             }
 
                             string? messageType =
-                                GetString(
-                                    message,
-                                    "type");
+                                GetString(message, "type");
 
-                            // =================================================
-                            // 4. Handle normal text
-                            // =================================================
+                            if (messageType != "text" &&
+                                messageType != "interactive")
+                            {
+                                continue;
+                            }
+
+                            // ============================================
+                            // 5. GET INCOMING TEXT
+                            // ============================================
+
+                            string? incomingText = null;
+
+                            if (messageType == "text" &&
+                                message.TryGetProperty(
+                                    "text",
+                                    out var textPayload))
+                            {
+                                incomingText =
+                                    GetString(textPayload, "body")?.Trim();
+                            }
+
+                            // ============================================
+                            // 6. CHECK CUSTOMER REGISTRATION
+                            // ============================================
+
+                            var customer = await _customerRepository
+                                .GetByWhatsAppWaIdAsync(
+                                    senderWaId,
+                                    cancellationToken);
+
+                            // Customer has not registered or consented
+                            if (customer?.ConsentAt == null)
+                            {
+                                // ========================================
+                                // 6.1 CUSTOMER DECLINES CONSENT
+                                // ========================================
+
+                                if (string.Equals(
+                                        incomingText,
+                                        "DECLINE",
+                                        StringComparison.OrdinalIgnoreCase))
+                                {
+                                    var declinedTemplate =
+                                        await _messageTemplateRepository
+                                            .GetActiveByKeyAsync(
+                                                "CONSENT_DECLINED",
+                                                cancellationToken);
+
+                                    if (declinedTemplate == null)
+                                    {
+                                        throw new InvalidOperationException(
+                                            "CONSENT_DECLINED template is missing.");
+                                    }
+
+                                    await _whatsAppService
+                                        .SendTextMessageAsync(
+                                            senderWaId,
+                                            declinedTemplate.MessageMarathi,
+                                            cancellationToken);
+
+                                    _logger.LogInformation(
+                                        "Customer declined registration.");
+
+                                    // Do not create customer record
+                                    continue;
+                                }
+
+                                // Get consent request from SQL Server
+                                var consentTemplate =
+                                    await _messageTemplateRepository
+                                        .GetActiveByKeyAsync(
+                                            "CONSENT_REQUEST",
+                                            cancellationToken);
+
+                                if (consentTemplate == null)
+                                {
+                                    throw new InvalidOperationException(
+                                        "CONSENT_REQUEST template is missing.");
+                                }
+
+                                // ========================================
+                                // 6.2 CUSTOMER ACCEPTS CONSENT
+                                // ========================================
+
+                                if (string.Equals(
+                                        incomingText,
+                                        "AGREE",
+                                        StringComparison.OrdinalIgnoreCase))
+                                {
+                                    // Register customer in SQL Server
+                                    int customerId =
+                                        await _customerRepository
+                                            .CreateWithConsentAsync(
+                                                senderWaId,
+                                                DateTime.UtcNow,
+                                                cancellationToken);
+
+                                    // Confirm consent was saved
+                                    var registeredCustomer =
+                                        await _customerRepository
+                                            .GetByWhatsAppWaIdAsync(
+                                                senderWaId,
+                                                cancellationToken);
+
+                                    if (registeredCustomer?.ConsentAt == null)
+                                    {
+                                        throw new InvalidOperationException(
+                                            "Customer consent could not be confirmed.");
+                                    }
+
+                                    _logger.LogInformation(
+                                        "Customer {CustomerId} registered with consent.",
+                                        customerId);
+
+                                    // Fetch registration success message
+                                    var acceptedTemplate =
+                                        await _messageTemplateRepository
+                                            .GetActiveByKeyAsync(
+                                                "CONSENT_ACCEPTED",
+                                                cancellationToken);
+
+                                    if (acceptedTemplate == null)
+                                    {
+                                        throw new InvalidOperationException(
+                                            "CONSENT_ACCEPTED template is missing.");
+                                    }
+
+                                    // Send Marathi confirmation
+                                    await _whatsAppService
+                                        .SendTextMessageAsync(
+                                            senderWaId,
+                                            acceptedTemplate.MessageMarathi,
+                                            cancellationToken);
+
+                                    // Show existing WhatsApp main menu
+                                    await _whatsAppService
+                                        .SendWelcomeMenuAsync(
+                                            senderWaId,
+                                            cancellationToken);
+
+                                    continue;
+                                }
+
+                                // ========================================
+                                // 6.3 NEW CUSTOMER - REQUEST CONSENT
+                                // ========================================
+
+                                await _whatsAppService
+                                    .SendTextMessageAsync(
+                                        senderWaId,
+                                        consentTemplate.MessageMarathi,
+                                        cancellationToken);
+
+                                // Do not allow menu access without consent
+                                continue;
+                            }
+
+                            // ============================================
+                            // 7. EXISTING CUSTOMER
+                            // ============================================
+
+                            // Update last activity in SQL Server
+                            await _customerRepository
+                                .UpdateLastSeenAsync(
+                                    customer.CustomerId,
+                                    cancellationToken);
+
+                            // ============================================
+                            // 8. HANDLE NORMAL TEXT
+                            // ============================================
 
                             if (messageType == "text")
                             {
@@ -315,10 +425,7 @@ namespace MatsyaSetu.API.Controllers
                                 }
 
                                 string body =
-                                    GetString(
-                                        text,
-                                        "body")?
-                                    .Trim() ?? "";
+                                    GetString(text, "body")?.Trim() ?? "";
 
                                 bool isWelcome =
                                     body.Equals(
@@ -347,9 +454,9 @@ namespace MatsyaSetu.API.Controllers
                                 continue;
                             }
 
-                            // =================================================
-                            // 5. Handle interactive WhatsApp list selection
-                            // =================================================
+                            // ============================================
+                            // 9. HANDLE INTERACTIVE MENU SELECTION
+                            // ============================================
 
                             if (messageType == "interactive")
                             {
@@ -362,8 +469,7 @@ namespace MatsyaSetu.API.Controllers
 
                                 if (GetString(
                                         interactive,
-                                        "type") !=
-                                    "list_reply")
+                                        "type") != "list_reply")
                                 {
                                     continue;
                                 }
@@ -375,16 +481,10 @@ namespace MatsyaSetu.API.Controllers
                                     continue;
                                 }
 
-                                // Example:
-                                // scheme_info
-
                                 string? selectionId =
-                                    GetString(
-                                        listReply,
-                                        "id");
+                                    GetString(listReply, "id");
 
-                                if (string.IsNullOrWhiteSpace(
-                                        selectionId))
+                                if (string.IsNullOrWhiteSpace(selectionId))
                                 {
                                     continue;
                                 }
@@ -393,9 +493,9 @@ namespace MatsyaSetu.API.Controllers
                                     "WhatsApp option selected: {Option}",
                                     selectionId);
 
-                                // ============================================
-                                // 6. Get selected option FROM DATABASE
-                                // ============================================
+                                // ========================================
+                                // 10. GET SELECTED MENU FROM SQL SERVER
+                                // ========================================
 
                                 var selectedMenuItem =
                                     await _botMenuRepository
@@ -403,22 +503,18 @@ namespace MatsyaSetu.API.Controllers
                                             selectionId,
                                             cancellationToken);
 
-                                // ------------------------------------------------
-                                // Option does not exist / disabled
-                                // ------------------------------------------------
-
                                 if (selectedMenuItem == null)
                                 {
                                     _logger.LogWarning(
-                                        "Menu option not found in database: {Option}",
+                                        "Menu option not found: {Option}",
                                         selectionId);
 
                                     continue;
                                 }
 
-                                // ============================================
-                                // 7. Handle SUBMENU
-                                // ============================================
+                                // ========================================
+                                // 11. HANDLE SUBMENU
+                                // ========================================
 
                                 if (string.Equals(
                                         selectedMenuItem.ResponseType,
@@ -426,7 +522,7 @@ namespace MatsyaSetu.API.Controllers
                                         StringComparison.OrdinalIgnoreCase))
                                 {
                                     _logger.LogInformation(
-                                        "Opening submenu for MenuItemId: {MenuItemId}",
+                                        "Opening submenu: {MenuItemId}",
                                         selectedMenuItem.MenuItemId);
 
                                     await _whatsAppService
@@ -437,14 +533,30 @@ namespace MatsyaSetu.API.Controllers
 
                                     continue;
                                 }
+
+                                // ========================================
+                                // 12. HANDLE DOCUMENT / PDF
+                                // ========================================
+
                                 if (string.Equals(
-        selectedMenuItem.ResponseType,
-        "DOCUMENT",
-        StringComparison.OrdinalIgnoreCase))
+                                        selectedMenuItem.ResponseType,
+                                        "DOCUMENT",
+                                        StringComparison.OrdinalIgnoreCase))
                                 {
                                     _logger.LogInformation(
-                                        "Document response selected for MenuItemId: {MenuItemId}",
+                                        "Document selected: {MenuItemId}",
                                         selectedMenuItem.MenuItemId);
+
+                                    // Check document URL before responding
+                                    if (string.IsNullOrWhiteSpace(
+                                            selectedMenuItem.DocumentUrl))
+                                    {
+                                        _logger.LogWarning(
+                                            "Document URL missing: {MenuItemId}",
+                                            selectedMenuItem.MenuItemId);
+
+                                        continue;
+                                    }
 
                                     // Send Marathi message first
                                     if (!string.IsNullOrWhiteSpace(
@@ -457,17 +569,7 @@ namespace MatsyaSetu.API.Controllers
                                                 cancellationToken);
                                     }
 
-                                    // Document URL is required for PDF delivery
-                                    if (string.IsNullOrWhiteSpace(
-                                            selectedMenuItem.DocumentUrl))
-                                    {
-                                        _logger.LogWarning(
-                                            "Document URL is missing for MenuItemId: {MenuItemId}",
-                                            selectedMenuItem.MenuItemId);
-
-                                        continue;
-                                    }
-
+                                    // Send document stored at SQL URL
                                     await _whatsAppService
                                         .SendDocumentMessageAsync(
                                             senderWaId,
@@ -477,33 +579,24 @@ namespace MatsyaSetu.API.Controllers
                                             cancellationToken);
 
                                     _logger.LogInformation(
-                                        "Document sent for MenuItemId: {MenuItemId}",
+                                        "Document submitted: {MenuItemId}",
                                         selectedMenuItem.MenuItemId);
 
                                     continue;
                                 }
 
-                                // ============================================
-                                // 8. Get ActionCode
-                                // ============================================
+                                // ========================================
+                                // 13. HANDLE ACTION CODE
+                                // ========================================
 
                                 string actionCode =
                                     selectedMenuItem.ActionCode;
 
-                                _logger.LogInformation(
-                                    "Database ActionCode: {ActionCode}",
-                                    actionCode);
-
-                                // ============================================
-                                // 9. Dispatch action to appropriate handler
-                                // ============================================
-
-                                var context =
-                                    new BotActionContext
-                                    {
-                                        SenderWaId = senderWaId,
-                                        OptionKey = selectionId
-                                    };
+                                var context = new BotActionContext
+                                {
+                                    SenderWaId = senderWaId,
+                                    OptionKey = selectionId
+                                };
 
                                 string? reply =
                                     await _botActionDispatcher
@@ -512,12 +605,7 @@ namespace MatsyaSetu.API.Controllers
                                             context,
                                             cancellationToken);
 
-                                // ============================================
-                                // Unknown ActionCode
-                                // ============================================
-
-                                if (string.IsNullOrWhiteSpace(
-                                        reply))
+                                if (string.IsNullOrWhiteSpace(reply))
                                 {
                                     _logger.LogWarning(
                                         "No handler found for ActionCode: {ActionCode}",
@@ -526,10 +614,7 @@ namespace MatsyaSetu.API.Controllers
                                     continue;
                                 }
 
-                                // ============================================
-                                // Send response
-                                // ============================================
-
+                                // Send handler response
                                 await _whatsAppService
                                     .SendTextMessageAsync(
                                         senderWaId,
@@ -557,20 +642,18 @@ namespace MatsyaSetu.API.Controllers
         }
 
         // ============================================================
-        // Helper method
+        // HELPER - READ STRING PROPERTY FROM JSON
         // ============================================================
 
         private static string? GetString(
             JsonElement parent,
             string propertyName)
         {
-            if (parent.ValueKind !=
-                    JsonValueKind.Object ||
+            if (parent.ValueKind != JsonValueKind.Object ||
                 !parent.TryGetProperty(
                     propertyName,
                     out var element) ||
-                element.ValueKind !=
-                    JsonValueKind.String)
+                element.ValueKind != JsonValueKind.String)
             {
                 return null;
             }

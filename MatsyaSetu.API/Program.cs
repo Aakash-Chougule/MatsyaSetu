@@ -52,6 +52,22 @@ builder.Services.AddScoped<
     IBotMenuRepository,
     BotMenuRepository>();
 
+// WhatsApp customer registration and tracking
+builder.Services.AddScoped<
+    IWhatsAppCustomerRepository,
+    WhatsAppCustomerRepository>();
+
+
+// ============================================================
+// Bot Message Template Repository
+// Retrieve Marathi messages dynamically from SQL Server
+// ============================================================
+
+builder.Services.AddScoped<
+    IBotMessageTemplateRepository,
+    BotMessageTemplateRepository>();
+
+
 builder.Services.AddScoped<
     ISchemeRepository,
     SchemeRepository>();
